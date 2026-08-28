@@ -1,81 +1,99 @@
-import pytesseract
-from PIL import Image
 import re
 
+import pytesseract
+from PIL import Image
 
-def extract_text(image_path):
-    image = Image.open(image_path)
+
+def extract_text(image_source):
+    """Extract text from an invoice image using Tesseract OCR."""
+    image = Image.open(image_source)
     text = pytesseract.image_to_string(image, lang="fra")
     return text
 
+def parse_amount(amount):
+    """Convert a French-formatted amount into a float."""
+    amount = amount.replace(" ", "").replace(",", ".")
+    return float(amount)
+
 
 def extract_invoice_data(text):
+    """Extract structured information from OCR text."""
     data = {}
 
-    # Numéro de facture
-    match = re.search(r"N[°º]\s*FACTURE\s*:\s*([A-Z0-9-]+)", text, re.IGNORECASE)
+    # Invoice number
+    match = re.search(
+        r"N[°º]\s*FACTURE\s*:\s*([A-Z0-9-]+)",
+        text,
+        re.IGNORECASE,
+    )
 
     if match:
         data["invoice_number"] = match.group(1)
 
-    # Date de facture
-    match = re.search(r"DATE\s*:\s*(\d{2}/\d{2}/\d{4})", text, re.IGNORECASE)
+    # Invoice date
+    match = re.search(
+        r"DATE\s*:\s*(\d{2}/\d{2}/\d{4})",
+        text,
+        re.IGNORECASE,
+    )
 
     if match:
         data["date"] = match.group(1)
 
-     # Fournisseur
+    # Supplier
     match = re.search(
         r"^(.*?)\s*\n\s*(SARL|SA|SUARL|SAS)\s*$",
         text,
-        re.IGNORECASE | re.MULTILINE
+        re.IGNORECASE | re.MULTILINE,
     )
 
     if match:
-        data["supplier"] = f"{match.group(1).strip()} {match.group(2).strip()}"
-        # Total TTC
+        data["supplier"] = (
+            f"{match.group(1).strip()} {match.group(2).strip()}"
+        )
+
+    # Total TTC
     match = re.search(
         r"TOTAL\s*TTC.*?([\d\s]+,\d{3})\s*DT",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     if match:
-        amount = match.group(1)
-        amount = amount.replace(" ", "").replace(",", ".")
-        data["total_ttc"] = float(amount)
-     # TVA
+        data["total_ttc"] = parse_amount(match.group(1))
+
+    # VAT
     match = re.search(
         r"TVA\s*\(\s*\d+\s*%\s*\)\s+([\d\s]+,\d{3})",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     if match:
-        amount = match.group(1)
-        amount = amount.replace(" ", "").replace(",", ".")
-        data["vat"] = float(amount)
-        # Sous-total
+        data["vat"] = parse_amount(match.group(1))
+
+    # Subtotal
     match = re.search(
         r"SOUS[-\s]?TOTAL\s+([\d\s]+,\d{3})",
         text,
-        re.IGNORECASE
+        re.IGNORECASE,
     )
 
     if match:
-        amount = match.group(1)
-        amount = amount.replace(" ", "").replace(",", ".")
-        data["subtotal"] = float(amount)
+        data["subtotal"] = parse_amount(match.group(1))
+
     return data
-    
 
-    if match:
-        amount = match.group(1)
-        amount = amount.replace(" ", "").replace(",", ".")
-        data["total_ttc"] = float(amount)
 
-text = extract_text("invoices/invoice_test.png")
+def main():
+    """Run the invoice parser on a test invoice."""
+    image_path = "invoices/invoice_test.png"
 
-invoice_data = extract_invoice_data(text)
+    text = extract_text(image_path)
+    invoice_data = extract_invoice_data(text)
 
-print(invoice_data)
+    print(invoice_data)
+
+
+if __name__ == "__main__":
+    main()

@@ -16,3 +16,9 @@ env/
 
 # Test files
 *.log
+
+# Generated invoice uploads
+invoices/uploaded_invoice.png
+
+# Agent files
+.agents/
