@@ -81,7 +81,16 @@ def extract_invoice_data(text):
 
     if match:
         data["subtotal"] = parse_amount(match.group(1))
+    # Validate invoice amounts
+    if all(
+        key in data
+        for key in ["subtotal", "vat", "total_ttc"]
+    ):
+        expected_total = data["subtotal"] + data["vat"]
 
+        data["amounts_consistent"] = (
+            abs(expected_total - data["total_ttc"]) < 0.01
+        )
     return data
 
 
