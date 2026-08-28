@@ -1,4 +1,6 @@
+
 import streamlit as st
+import pandas as pd
 
 from invoice_parser import extract_text, extract_invoice_data
 
@@ -15,7 +17,7 @@ st.set_page_config(
 
 
 # ---------------------------------------------------------
-# Style simple
+# Style
 # ---------------------------------------------------------
 
 st.markdown(
@@ -46,17 +48,6 @@ st.markdown(
         margin-bottom: 15px;
     }
 
-    .result-label {
-        color: #777777;
-        font-size: 14px;
-        margin-bottom: 5px;
-    }
-
-    .result-value {
-        font-size: 20px;
-        font-weight: 600;
-    }
-
     </style>
     """,
     unsafe_allow_html=True,
@@ -74,8 +65,8 @@ st.markdown(
 
 st.markdown(
     '<div class="subtitle">'
-    'Automatically extract information from invoices using OCR.'
-    '</div>',
+    "Automatically extract and validate information from invoices using OCR."
+    "</div>",
     unsafe_allow_html=True,
 )
 
@@ -84,300 +75,471 @@ st.markdown(
 # Upload
 # ---------------------------------------------------------
 
-uploaded_file = st.file_uploader(
-    "Upload your invoice",
+uploaded_files = st.file_uploader(
+    "Upload your invoices",
     type=["png", "jpg", "jpeg"],
+    accept_multiple_files=True,
 )
 
 
 # ---------------------------------------------------------
-# Processing
+# Process invoices
 # ---------------------------------------------------------
 
-if uploaded_file is not None:
+if uploaded_files:
 
     st.divider()
 
-    # -----------------------------------------------------
-    # Invoice + button
-    # -----------------------------------------------------
+    st.write(
+        f"📄 **{len(uploaded_files)} invoice(s) selected**"
+    )
 
-    col1, col2 = st.columns(2)
+    if st.button(
+        "🔍 Process Invoices",
+        use_container_width=True,
+    ):
 
-    with col1:
+        results = []
 
-        st.subheader("📄 Invoice")
+        progress_bar = st.progress(0)
 
-        st.image(
-            uploaded_file,
-            use_container_width=True,
-        )
+        for index, uploaded_file in enumerate(uploaded_files):
 
-    with col2:
+            try:
 
-        st.subheader("🔍 Analysis")
+                with st.spinner(
+                    f"Processing {uploaded_file.name}..."
+                ):
 
-        st.write(
-            "Click the button to extract the invoice information."
-        )
+                    text = extract_text(uploaded_file)
 
-        if st.button(
-            "Extract Data",
-            use_container_width=True,
-        ):
+                    invoice_data = extract_invoice_data(text)
 
-            with st.spinner("Processing invoice..."):
-
-                text = extract_text(
-                    uploaded_file
+                results.append(
+                    {
+                        "filename": uploaded_file.name,
+                        "data": invoice_data,
+                        "ocr_text": text,
+                        "error": None,
+                    }
                 )
 
-                invoice_data = extract_invoice_data(
-                    text
+            except Exception as error:
+
+                results.append(
+                    {
+                        "filename": uploaded_file.name,
+                        "data": {},
+                        "ocr_text": "",
+                        "error": str(error),
+                    }
                 )
 
-            # Save results
-            st.session_state["invoice_data"] = invoice_data
-            st.session_state["ocr_text"] = text
+            progress_bar.progress(
+                (index + 1) / len(uploaded_files)
+            )
+
+        st.session_state["invoice_results"] = results
 
 
 # ---------------------------------------------------------
 # Results
 # ---------------------------------------------------------
 
-if "invoice_data" in st.session_state:
+if "invoice_results" in st.session_state:
 
-    invoice_data = st.session_state["invoice_data"]
+    results = st.session_state["invoice_results"]
 
     st.divider()
 
-    st.success("Invoice processed successfully!")
+    st.success(
+        f"✅ {len(results)} invoice(s) processed successfully!"
+    )
+
 
     # -----------------------------------------------------
-    # Invoice details
+    # Build dataframe
     # -----------------------------------------------------
 
-    st.subheader("📋 Invoice Details")
+    rows = []
+
+    for result in results:
+
+        data = result["data"]
+
+        subtotal = data.get("subtotal")
+        vat = data.get("vat")
+        total_ttc = data.get("total_ttc")
+
+        amounts_consistent = data.get(
+            "amounts_consistent"
+        )
+
+        if amounts_consistent is True:
+            status = "✅ Valid"
+
+        elif amounts_consistent is False:
+            status = "⚠️ Inconsistent"
+
+        else:
+            status = "❓ Incomplete"
+
+        rows.append(
+            {
+                "Invoice": data.get(
+                    "invoice_number",
+                    "Not detected",
+                ),
+                "Date": data.get(
+                    "date",
+                    "Not detected",
+                ),
+                "Supplier": data.get(
+                    "supplier",
+                    "Not detected",
+                ),
+                "Subtotal": subtotal,
+                "VAT": vat,
+                "Total TTC": total_ttc,
+                "Status": status,
+            }
+        )
+
+
+    df = pd.DataFrame(rows)
+
+
+    # -----------------------------------------------------
+    # Global statistics
+    # -----------------------------------------------------
+
+    st.subheader("📊 Global Summary")
+
+    total_invoices = len(df)
+
+    valid_count = sum(
+        df["Status"] == "✅ Valid"
+    )
+
+    inconsistent_count = sum(
+        df["Status"] == "⚠️ Inconsistent"
+    )
+
+    incomplete_count = sum(
+        df["Status"] == "❓ Incomplete"
+    )
+
+    total_subtotal = (
+        df["Subtotal"]
+        .dropna()
+        .sum()
+    )
+
+    total_vat = (
+        df["VAT"]
+        .dropna()
+        .sum()
+    )
+
+    total_ttc = (
+        df["Total TTC"]
+        .dropna()
+        .sum()
+    )
+
+
+    # -----------------------------------------------------
+    # Metrics
+    # -----------------------------------------------------
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    with col1:
+
+        st.metric(
+            "Invoices",
+            total_invoices,
+        )
+
+    with col2:
+
+        st.metric(
+            "Valid",
+            valid_count,
+        )
+
+    with col3:
+
+        st.metric(
+            "Inconsistent",
+            inconsistent_count,
+        )
+
+    with col4:
+
+        st.metric(
+            "Incomplete",
+            incomplete_count,
+        )
+
+
+    st.write("### 💰 Financial Totals")
+
 
     col1, col2, col3 = st.columns(3)
 
     with col1:
 
-        st.markdown(
-            """
-            <div class="result-box">
-                <div class="result-label">
-                    Invoice Number
-                </div>
-            """,
-            unsafe_allow_html=True,
+        st.metric(
+            "Total Subtotal",
+            f"{total_subtotal:,.2f} DT",
         )
 
-        st.markdown(
-            f"""
-                <div class="result-value">
-                    {invoice_data.get(
+    with col2:
+
+        st.metric(
+            "Total VAT",
+            f"{total_vat:,.2f} DT",
+        )
+
+    with col3:
+
+        st.metric(
+            "Total TTC",
+            f"{total_ttc:,.2f} DT",
+        )
+
+
+    # -----------------------------------------------------
+    # Global table
+    # -----------------------------------------------------
+
+    st.write("### 📋 All Invoices")
+
+    display_df = df.copy()
+
+    display_df["Subtotal"] = display_df[
+        "Subtotal"
+    ].apply(
+        lambda x:
+        f"{x:,.2f} DT"
+        if pd.notna(x)
+        else "Not detected"
+    )
+
+    display_df["VAT"] = display_df[
+        "VAT"
+    ].apply(
+        lambda x:
+        f"{x:,.2f} DT"
+        if pd.notna(x)
+        else "Not detected"
+    )
+
+    display_df["Total TTC"] = display_df[
+        "Total TTC"
+    ].apply(
+        lambda x:
+        f"{x:,.2f} DT"
+        if pd.notna(x)
+        else "Not detected"
+    )
+
+    st.dataframe(
+        display_df,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+    # -----------------------------------------------------
+    # CSV Export
+    # -----------------------------------------------------
+
+    st.write("### 📥 Export Results")
+
+    csv_data = df.to_csv(
+        index=False
+    ).encode("utf-8")
+
+    st.download_button(
+        label="⬇️ Download CSV",
+        data=csv_data,
+        file_name="invoice_results.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+
+    # -----------------------------------------------------
+    # Individual invoices
+    # -----------------------------------------------------
+
+    st.write("### 📄 Invoice Details")
+
+    for index, result in enumerate(results):
+
+        filename = result["filename"]
+        invoice_data = result["data"]
+        error = result["error"]
+
+        with st.expander(
+            f"Invoice {index + 1} — {filename}",
+            expanded=False,
+        ):
+
+            if error:
+
+                st.error(
+                    f"Unable to process invoice: {error}"
+                )
+
+                continue
+
+
+            # ---------------------------------------------
+            # Invoice information
+            # ---------------------------------------------
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+
+                st.write("**Invoice Number**")
+
+                st.info(
+                    invoice_data.get(
                         "invoice_number",
-                        "Not detected"
-                    )}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                        "Not detected",
+                    )
+                )
 
-    with col2:
+            with col2:
 
-        st.markdown(
-            """
-            <div class="result-box">
-                <div class="result-label">
-                    Date
-                </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                st.write("**Date**")
 
-        st.markdown(
-            f"""
-                <div class="result-value">
-                    {invoice_data.get(
+                st.info(
+                    invoice_data.get(
                         "date",
-                        "Not detected"
-                    )}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                        "Not detected",
+                    )
+                )
 
-    with col3:
+            with col3:
 
-        st.markdown(
-            """
-            <div class="result-box">
-                <div class="result-label">
-                    Supplier
-                </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                st.write("**Supplier**")
 
-        st.markdown(
-            f"""
-                <div class="result-value">
-                    {invoice_data.get(
+                st.info(
+                    invoice_data.get(
                         "supplier",
-                        "Not detected"
-                    )}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                        "Not detected",
+                    )
+                )
 
 
-    # -----------------------------------------------------
-    # Financial summary
-    # -----------------------------------------------------
+            # ---------------------------------------------
+            # Financial summary
+            # ---------------------------------------------
 
-    st.subheader("💰 Financial Summary")
+            st.write("### 💰 Financial Summary")
 
-    subtotal = invoice_data.get("subtotal")
-    vat = invoice_data.get("vat")
-    total_ttc = invoice_data.get("total_ttc")
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-
-        if subtotal is not None:
-
-            st.metric(
-                "Subtotal",
-                f"{subtotal:,.2f} DT",
-            )
-
-        else:
-
-            st.metric(
-                "Subtotal",
-                "Not detected",
-            )
-
-    with col2:
-
-        if vat is not None:
-
-            st.metric(
-                "VAT",
-                f"{vat:,.2f} DT",
-            )
-
-        else:
-
-            st.metric(
-                "VAT",
-                "Not detected",
-            )
-
-    with col3:
-
-        if total_ttc is not None:
-
-            st.metric(
-                "Total TTC",
-                f"{total_ttc:,.2f} DT",
-            )
-
-        else:
-
-            st.metric(
-                "Total TTC",
-                "Not detected",
-            )
-
-
-    # -----------------------------------------------------
-    # Validation
-    # -----------------------------------------------------
-
-    if (
-        subtotal is not None
-        and vat is not None
-        and total_ttc is not None
-    ):
-
-        st.subheader("🔎 Amount Validation")
-
-        expected_total = subtotal + vat
-
-        difference = abs(
-            expected_total - total_ttc
-        )
-
-        amounts_consistent = invoice_data.get(
-            "amounts_consistent",
-            False,
-        )
-
-        if amounts_consistent:
-
-            st.success(
-                "✅ Amounts are consistent."
-            )
-
-            st.write(
-                f"Expected Total: "
-                f"**{expected_total:,.2f} DT**"
-            )
-
-            st.write(
-                f"Detected Total: "
-                f"**{total_ttc:,.2f} DT**"
-            )
-
-        else:
-
-            st.warning(
-                "⚠️ Amount inconsistency detected."
-            )
+            subtotal = invoice_data.get("subtotal")
+            vat = invoice_data.get("vat")
+            total_ttc = invoice_data.get("total_ttc")
 
             col1, col2, col3 = st.columns(3)
 
             with col1:
 
                 st.metric(
-                    "Expected Total",
-                    f"{expected_total:,.2f} DT",
+                    "Subtotal",
+                    f"{subtotal:,.2f} DT"
+                    if subtotal is not None
+                    else "Not detected",
                 )
 
             with col2:
 
                 st.metric(
-                    "Detected Total",
-                    f"{total_ttc:,.2f} DT",
+                    "VAT",
+                    f"{vat:,.2f} DT"
+                    if vat is not None
+                    else "Not detected",
                 )
 
             with col3:
 
                 st.metric(
-                    "Difference",
-                    f"{difference:,.2f} DT",
+                    "Total TTC",
+                    f"{total_ttc:,.2f} DT"
+                    if total_ttc is not None
+                    else "Not detected",
                 )
 
 
-    # -----------------------------------------------------
-    # OCR text
-    # -----------------------------------------------------
+            # ---------------------------------------------
+            # Validation
+            # ---------------------------------------------
 
-    st.subheader("📝 OCR Text")
+            if (
+                subtotal is not None
+                and vat is not None
+                and total_ttc is not None
+            ):
 
-    with st.expander("Show extracted text"):
+                expected_total = (
+                    subtotal + vat
+                )
 
-        st.text(
-            st.session_state.get(
-                "ocr_text",
-                "",
-            )
-        )
+                difference = abs(
+                    expected_total - total_ttc
+                )
+
+                if invoice_data.get(
+                    "amounts_consistent",
+                    False,
+                ):
+
+                    st.success(
+                        "✅ Amounts are consistent."
+                    )
+
+                else:
+
+                    st.warning(
+                        "⚠️ Amount inconsistency detected."
+                    )
+
+                    col1, col2, col3 = st.columns(3)
+
+                    with col1:
+
+                        st.metric(
+                            "Expected Total",
+                            f"{expected_total:,.2f} DT",
+                        )
+
+                    with col2:
+
+                        st.metric(
+                            "Detected Total",
+                            f"{total_ttc:,.2f} DT",
+                        )
+
+                    with col3:
+
+                        st.metric(
+                            "Difference",
+                            f"{difference:,.2f} DT",
+                        )
+
+
+            # ---------------------------------------------
+            # OCR
+            # ---------------------------------------------
+
+            with st.expander("📝 Show OCR text"):
+
+                st.text(
+                    result["ocr_text"]
+                )
